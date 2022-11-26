@@ -78,17 +78,16 @@ int process_arglist(int count, char **arglist) {
 int with_background(char ** arglist, int last_index) {
     arglist[last_index] = NULL; // we want to remove & from the command
     pid_t pid = fork();
-    switch (pid) {
-        case ERROR_RETURN_VALUE:
-            fprintf(stderr, "Failed created child process %s\n", strerror(errno));
-            return ERROR_EXIT;
-        case 0:
-            // child
-            child_execute_command(arglist);
-        default:
-            // parent
-            return NO_ERROR_EXIT; // no need to wait for child
+    if (pid == ERROR_RETURN_VALUE) {
+        fprintf(stderr, "Failed created subprocess %s\n", strerror(errno));
+        return ERROR_EXIT;
     }
+    if (pid == 0) {
+        // child
+        child_execute_command(arglist);
+    }
+    // parent (child will never get here)
+    return NO_ERROR_EXIT; // no need to wait for child
 }
 
 void child_execute_command(char ** arglist) {
@@ -112,18 +111,17 @@ int parent_wait_for_child(pid_t pid) {
 
 int execute_command(char ** arglist) {
     pid_t pid = fork();
-    switch (pid) {
-        case ERROR_RETURN_VALUE:
-            fprintf(stderr, "Failed created subprocess %s\n", strerror(errno));
-            return ERROR_EXIT;
-        case 0:
-            // child
-            set_to_not_ignore_sigint();
-            child_execute_command(arglist);
-        default:
-            // parent
-            return parent_wait_for_child(pid);
+    if (pid == ERROR_RETURN_VALUE) {
+        fprintf(stderr, "Failed created subprocess %s\n", strerror(errno));
+        return ERROR_EXIT;
     }
+    if (pid == 0) {
+        // child
+        set_to_not_ignore_sigint();
+        child_execute_command(arglist);
+    }
+    // parent (child will never get here)
+    return parent_wait_for_child(pid);
 }
 
 int pipe_handle(int my_pipe[2], int to_use_side, int std_side) {
@@ -157,40 +155,38 @@ int with_pipe(char ** arglist, int i) {
         return ERROR_EXIT;
     }
     pid_t pid2, pid = fork();
-    switch (pid) {
-        case ERROR_RETURN_VALUE:
-            fprintf(stderr, "Failed creating subprocess. %s\n", strerror(errno));
-            return ERROR_EXIT;
-        case 0:
-            // child
-            set_to_not_ignore_sigint();
-            if (pipe_handle(my_pipe, WRITE_SIDE, STDOUT_FILENO) == CHILD_ERROR_EXIT)
-                exit(CHILD_ERROR_EXIT);
-            child_execute_command(arglist);
-        default:
-            // parent
-            pid2 = fork();
-            switch (pid2) {
-                case ERROR_RETURN_VALUE:
-                    fprintf(stderr, "Failed created subprocess %s\n", strerror(errno));
-                    return ERROR_EXIT;
-                case 0:
-                    // second child
-                    set_to_not_ignore_sigint();
-                    if (pipe_handle(my_pipe, READ_SIDE, STDIN_FILENO) == CHILD_ERROR_EXIT)
-                        exit(CHILD_ERROR_EXIT);
-                    child_execute_command(arglist + (i+1));
-                default:
-                    // parent
-                    if (parent_wait_for_child(pid) == ERROR_EXIT) {
-                        return ERROR_EXIT;
-                    }
-            }
-            // pipe_handle will close both sides
-            if (pipe_handle(my_pipe, 0, STD_SIDE_NOT_NEEDED) == CHILD_ERROR_EXIT)
-                return ERROR_EXIT;
-            return parent_wait_for_child(pid2);
+    if (pid == ERROR_RETURN_VALUE) {
+        fprintf(stderr, "Failed created subprocess %s\n", strerror(errno));
+        return ERROR_EXIT;
     }
+    if (pid == 0) {
+        // child
+        set_to_not_ignore_sigint();
+        if (pipe_handle(my_pipe, WRITE_SIDE, STDOUT_FILENO) == CHILD_ERROR_EXIT)
+            exit(CHILD_ERROR_EXIT);
+        child_execute_command(arglist);
+    }
+    // parent (child will never get here)
+    pid2 = fork();
+    if (pid2 == ERROR_RETURN_VALUE) {
+        fprintf(stderr, "Failed created subprocess %s\n", strerror(errno));
+        return ERROR_EXIT;
+    }
+    if (pid2 == 0) {
+        // second child
+        set_to_not_ignore_sigint();
+        if (pipe_handle(my_pipe, READ_SIDE, STDIN_FILENO) == CHILD_ERROR_EXIT)
+            exit(CHILD_ERROR_EXIT);
+        child_execute_command(arglist + (i + 1));
+    }
+    // parent (child will never get here)
+    if (parent_wait_for_child(pid) == ERROR_EXIT) {
+        return ERROR_EXIT;
+    }
+    // pipe_handle will close both sides
+    if (pipe_handle(my_pipe, 0, STD_SIDE_NOT_NEEDED) == CHILD_ERROR_EXIT)
+        return ERROR_EXIT;
+    return parent_wait_for_child(pid2);
 }
 
 int with_redirection(char ** arglist, int redirection_index) {
@@ -198,26 +194,25 @@ int with_redirection(char ** arglist, int redirection_index) {
     // the output file path is the next word in arglist after >
     char *output_file_path = arglist[redirection_index + 1];
     pid_t pid = fork();
-    switch (pid) {
-        case ERROR_RETURN_VALUE:
-            fprintf(stderr, "Failed created subprocess %s\n", strerror(errno));
-            return ERROR_EXIT;
-        case 0:
-            // child
-            set_to_not_ignore_sigint();
-            if ((file_descriptor = open(output_file_path, O_CREAT | O_TRUNC | O_WRONLY, S_IRWXU)) < 0) {
-                printf("Failed creating file descriptor %s. %s\n", output_file_path, strerror(errno));
-                exit(CHILD_ERROR_EXIT);
-            }
-            // make stdout go to file
-            if (dup2(file_descriptor, STDOUT_FILENO) == ERROR_RETURN_VALUE) {
-                printf("Failed duplicating file descriptor to stdout. %s\n", strerror(errno));
-                exit(CHILD_ERROR_EXIT);
-            }
-            arglist[redirection_index] = NULL;
-            child_execute_command(arglist);
-        default:
-            // parent
-            return parent_wait_for_child(pid);
+    if (pid == ERROR_RETURN_VALUE) {
+        fprintf(stderr, "Failed created subprocess %s\n", strerror(errno));
+        return ERROR_EXIT;
     }
+    if (pid == 0) {
+        // child
+        set_to_not_ignore_sigint();
+        if ((file_descriptor = open(output_file_path, O_CREAT | O_TRUNC | O_WRONLY, S_IRWXU)) < 0) {
+            printf("Failed creating file descriptor %s. %s\n", output_file_path, strerror(errno));
+            exit(CHILD_ERROR_EXIT);
+        }
+        // make stdout go to file
+        if (dup2(file_descriptor, STDOUT_FILENO) == ERROR_RETURN_VALUE) {
+            printf("Failed duplicating file descriptor to stdout. %s\n", strerror(errno));
+            exit(CHILD_ERROR_EXIT);
+        }
+        arglist[redirection_index] = NULL;
+        child_execute_command(arglist);
+    }
+    // parent (child will never get here)
+    return parent_wait_for_child(pid);
 }
